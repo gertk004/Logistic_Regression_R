@@ -1,0 +1,194 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+#install packages
+#install.packages ("tidyverse")
+#install.packages("caret")
+#install.packages("ROCR")
+#install.packages("ROSE")
+
+#load libraries
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(ROSE)
+
+#load csv
+insur <- read.csv("insurance.csv")
+view(insur)
+
+#convert categorical variables into factors
+insur$CLAIM <- factor(insur$CLAIM, levels = c(0, 1), labels = c("No", "Yes"))
+insur$KIDSDRIV <- factor(insur$KIDSDRIV, levels = c(0, 1), labels = c("No", "Yes"))
+insur$HOMEKIDS <- factor(insur$HOMEKIDS, levels = c(0, 1), labels = c("No", "Yes"))
+insur$HOMEOWN <- factor(insur$HOMEOWN, levels = c(0, 1), labels = c("No", "Yes"))
+insur$MSTATUS <- factor(insur$MSTATUS, levels = c(0, 1), labels = c("No", "Yes"))
+insur$GENDER <- factor(insur$GENDER, levels = c(0, 1), labels = c("Male", "Female"))
+insur$EDUCATION <- factor(insur$EDUCATION, levels = c(0, 1), labels = c("High School Only",
+                                                                        "College or beyond"))
+insur$CAR_USE <- factor(insur$CAR_USE, levels = c(0, 1), labels = c("Private", "Commercial"))
+insur$RED_CAR <- factor(insur$RED_CAR, levels = c(0, 1), labels = c("No", "Yes"))
+insur$CLM_BEF <- factor(insur$CLM_BEF, levels = c(0, 1), labels = c("No", "Yes"))
+insur$REVOKED <- factor(insur$REVOKED, levels = c(0, 1), labels = c("No", "Yes"))
+insur$MVR_PTS <- factor(insur$MVR_PTS, levels = c(0, 1), labels = c("No", "Yes"))
+insur$URBANICITY <- factor(insur$URBANICITY, levels = c(0, 1), labels = c("Rural", "Urban"))
+
+#check for na values
+sum(is.na(insur))
+
+#generate summary statistics for the variables
+summary(insur)
+
+#set seed for reproducibility
+set.seed(42)
+
+#partition set into training, validation, and test sets using 60/20/20
+set.seed(42)
+Samples <- sample(seq(1,3), size=nrow(insur), replace=TRUE, prob=c(0.6, 0.2, 0.2))
+Training <- insur[Samples==1, ]
+Valid <- insur[Samples==2, ]
+Test <- insur[Samples==3, ]
+
+#remove scientific notation
+options(scipen = 999)
+
+#since there isn't a severe class imbalance, we will go right to making a logistic regression using
+#claim as the outcome, and all other as predictor variables
+insur_glm <- glm(CLAIM ~., data = Training, family = binomial(link = "logit"))
+summary(insur_glm)
+
+#exponentiate the coefficients for odds ratios
+exp(coef(insur_glm))
+
+#next is to create a confusion matrix using the test set
+
+#obtain probability of positive cases
+insur_con <- predict(insur_glm, newdata = Valid, type = "response")
+
+#obtain a predicted class for each observation with a threshold of 0.5
+insur_class <- as.factor(ifelse(insur_con > 0.5, "Yes", "No"))
+
+#output performance metrics with a positive as "yes"
+confusionMatrix(insur_class, Valid$CLAIM, positive = "Yes")
+
+#Next use an ROC curve plot to measure the fit of the model
+
+#create a preditcion object for the ROC plot
+insur_roc <- prediction(insur_con, Valid$CLAIM)
+
+#create a performance object for the ROC plot
+insur_perf <- performance(insur_roc, "tpr", "fpr")
+
+#plot the curve
+plot(insur_perf)
+abline(a = 0, b = 1)
+
+#calculate Area Under Curve
+performance(insur_roc, measure = "auc")@y.values[[1]]
+
+#although there is not a severe class imbalance, there is a small one. Thus we will try using
+#oversampling to see if it improves out model.
+
+#create a data frame with only predictor variables
+training_predvar <- Training[-1]
+
+#create an oversample subset
+set.seed(42)
+oversample <- upSample(x = training_predvar, y = Training$CLAIM, yname = "CLAIM")
+
+table(oversample$CLAIM)
+
+#perform a logistic regression of the oversampled data set
+oversample_glm <- glm(CLAIM ~ ., data = oversample, family = binomial(link = "logit"))
+summary(oversample_glm)
+
+#create a confuction matrix for the oversample lr
+
+#probabilty of positive case
+os_con <- predict(oversample_glm, newdata = Valid, type = "response")
+
+#obtain a predicted class for each observation with a threshold of 0.5
+os_class <- as.factor(ifelse(os_con > 0.5, "Yes", "No"))
+
+#output performance metrics with a positive as "yes"
+confusionMatrix(os_class, Valid$CLAIM, positive = "Yes")
+
+#once again using the validation dataframe, create an ROC plot and calculate AUC
+
+#create a preditcion object for the ROC plot
+os_roc <- prediction(os_con, Valid$CLAIM)
+
+#create a performance object for the ROC plot
+os_perf <- performance(os_roc, "tpr", "fpr")
+
+#plot the curve
+plot(os_perf)
+abline(a = 0, b = 1)
+
+#calculate Area Under Curve
+performance(os_roc, measure = "auc")@y.values[[1]]
+
+#upon deciding sensitivity is more important than accuracy for the insurance company, we will continue
+#with the model from the oversampling set
+
+#create a confusion matrix using the test subset
+test_con <- predict(oversample_glm, newdata = Test, type = "response")
+
+#obtain a predicted class for each observation with a threshold of 0.5
+test_class <- as.factor(ifelse(test_con > 0.5, "Yes", "No"))
+
+#output performance metrics with a positive as "yes"
+confusionMatrix(test_class, Test$CLAIM, positive = "Yes")
+
+#create an ROC and calculate AUC for the test set
+
+#create a preditcion object for the ROC plot
+test_roc <- prediction(test_con, Test$CLAIM)
+
+#create a performance object for the ROC plot
+test_perf <- performance(test_roc, "tpr", "fpr")
+
+#plot the curve
+plot(test_perf)
+abline(a = 0, b = 1)
+
+#calculate Area Under Curve
+performance(test_roc, measure = "auc")@y.values[[1]]
+
+#we will use the model from the oversampled set to make prediction on new customers.
+
+#read the csv
+insur2 <- read.csv("insurance_predictions.csv")
+
+#convert categorical variables into factors
+insur2$CLAIM <- factor(insur2$CLAIM, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$KIDSDRIV <- factor(insur2$KIDSDRIV, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$HOMEKIDS <- factor(insur2$HOMEKIDS, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$HOMEOWN <- factor(insur2$HOMEOWN, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$MSTATUS <- factor(insur2$MSTATUS, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$GENDER <- factor(insur2$GENDER, levels = c(0, 1), labels = c("Male", "Female"))
+insur2$EDUCATION <- factor(insur2$EDUCATION, levels = c(0, 1), labels = c("High School Only",
+                                                                        "College or beyond"))
+insur2$CAR_USE <- factor(insur2$CAR_USE, levels = c(0, 1), labels = c("Private", "Commercial"))
+insur2$RED_CAR <- factor(insur2$RED_CAR, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$CLM_BEF <- factor(insur2$CLM_BEF, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$REVOKED <- factor(insur2$REVOKED, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$MVR_PTS <- factor(insur2$MVR_PTS, levels = c(0, 1), labels = c("No", "Yes"))
+insur2$URBANICITY <- factor(insur2$URBANICITY, levels = c(0, 1), labels = c("Rural", "Urban"))
+
+view(insur2)
+
+#make predictions on the new data
+insur2_pred <- predict(oversample_glm, newdata = insur2, type = "response")
+
+#Attach probability scores to new dataframe 
+insur2 <- cbind(insur2, Probabilities=insur2_pred)
+View(insur2)
+
+```
